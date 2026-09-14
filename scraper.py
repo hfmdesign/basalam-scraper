@@ -50,7 +50,7 @@ def extract_price_per_kg_from_text(card_text):
         if num > 0:
             return num
 
-    # الگوی ۳: بررس سطر به سطر برای پیدا کردن سطر حاوی "کیلویی"
+    # الگوی ۳: بررسی سطر به سطر برای پیدا کردن سطر حاوی "کیلویی"
     lines = card_text.split('\n')
     for line in lines:
         if 'کیلویی' in line:
@@ -81,7 +81,6 @@ def scrape_basalam(url):
             time.sleep(1.5)
 
         # استخراج لینک‌ها و کارت‌های اصلی محصولات باسلام
-        # محصولات باسلام عموماً داخل تگ‌های لینک یا کارت‌های محصول هستند
         card_elements = page.query_selector_all('a[href*="/product/"]')
         print(f"تعداد کل عناصر لینک یافت شده: {len(card_elements)}")
         
@@ -99,8 +98,8 @@ def scrape_basalam(url):
                 
                 full_link = clean_href if clean_href.startswith('http') else f"https://basalam.com{clean_href}"
                 
-                # برای دریافت متن کامل، بالاترین تگ والد کارت محصول را می‌گیریم
-                parent_card = elem.evaluate_handle('el => el.closest("article") || el.closest("div[class*='product']") || el.parentElement').as_element()
+                # دریافت متن کارت از والد عنصر
+                parent_card = elem.evaluate_handle('el => el.closest("article") || el.parentElement').as_element()
                 card_text = parent_card.inner_text().strip() if parent_card else elem.inner_text().strip()
                 
                 lines = [l.strip() for l in card_text.split('\n') if l.strip()]

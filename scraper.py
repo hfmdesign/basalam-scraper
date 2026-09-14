@@ -33,9 +33,8 @@ def clean_number(text):
     return int(''.join(nums)) if nums else 0
 
 def extract_price_per_kg(card_text):
-    """استخراج دقیق عدد قیمت فقط از عبارت کیلویی"""
+    """استخراج قیمت کیلویی در صورت وجود"""
     lines = [l.strip() for l in card_text.split('\n') if l.strip()]
-    
     for line in lines:
         if 'کیلویی' in line:
             price = clean_number(line)
@@ -46,64 +45,68 @@ def extract_price_per_kg(card_text):
 def scrape_basalam(url):
     items = []
     with sync_playwright() as p:
+        # تنظیمات مرورگر و User-Agent برای جلوگیری از بلاک شدن
         browser = p.chromium.launch(headless=True)
-        context = browser.new_context(viewport={'width': 1280, 'height': 800})
+        context = browser.new_context(
+            viewport={'width': 1440, 'height': 900},
+            user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
+        )
         page = context.new_page()
         
         print(f"در حال باز کردن لینک: {url}")
-        page.goto(url, timeout=90000)
-        page.wait_for_load_state("networkidle")
+        page.goto(url, timeout=120000, wait_until="domcontentloaded")
+        time.sleep(5)
         
-        # اسکرول خودکار تا انتهای صفحه برای بارگذاری تمام محصولات
-        print("در حال اسکرول و بارگذاری تمام محصولات...")
-        last_height = page.evaluate("document.body.scrollHeight")
-        
-        for _ in range(30):  # اسکرول متوالی برای دریافت کامل لیست
-            page.evaluate("window.scrollTo(0, document.body.scrollHeight);")
-            time.sleep(2.5)
-            
-            new_height = page.evaluate("document.body.scrollHeight")
-            if new_height == last_height:
-                # حرکت کوچک به بالا و پایین برای تحریک بارگذاری Lazy Loading
-                page.evaluate("window.scrollBy(0, -300);")
-                time.sleep(1)
-                page.evaluate("window.scrollTo(0, document.body.scrollHeight);")
-                time.sleep(2)
-                if page.evaluate("document.body.scrollHeight") == last_height:
-                    break
-            last_height = new_height
+        # اسکرول هوشمند برای بارگذاری تمام محصولات
+        print("در حال اسکرول صفحه...")
+        for i in range(20):
+            page.evaluate("window.scrollBy(0, 1000);")
+            time.sleep(1.5)
 
-        # یافتن کارت‌های محصولات
-        product_cards = page.query_selector_all('article, a[href*="/product/"]')
+        # استخراج تمامی لینک‌های محصولات موجود در صفحه
+        links = page.query_selector_all('a[href*="/product/"]')
+        print(f"تعداد کل عناصر یافت شده: {len(links)}")
+        
         seen_links = set()
         
-        for card in product_cards:
+        for link in links:
             try:
-                link_elem = card if card.tag_name == 'a' else card.query_selector('a[href*="/product/"]')
-                if not link_elem:
+                href = link.get_attribute('href')
+                if not href or '/product/' not in href:
                     continue
                 
-                href = link_elem.get_attribute('href')
-                if not href or href in seen_links or '/product/' not in href:
+                # یکسان‌سازی آدرس لینک
+                clean_href = href.split('?')[0]
+                if clean_href in seen_links:
                     continue
                 
-                full_link = href if href.startswith('http') else f"https://basalam.com{href}"
+                full_link = clean_href if clean_href.startswith('http') else f"https://basalam.com{clean_href}"
+                card_text = link.inner_text().strip()
                 
-                card_text = card.inner_text()
+                if not card_text:
+                    # تلاش برای دریافت متن از عنصر والد در صورت خالی بودن متن لینک
+                    parent = link.query_selector('xpath=..')
+                    if parent:
+                        card_text = parent.inner_text().strip()
+                
+                lines = [l.strip() for l in card_text.split('\n') if l.strip()]
+                title = lines[0] if lines else "بدون عنوان"
+                
+                # استخراج تمام اعداد مربوط به قیمت موجود در متن کارت
+                prices = [clean_number(l) for l in lines if clean_number(l) > 1000]
+                main_price = prices[0] if prices else 0
                 price_kg = extract_price_per_kg(card_text)
                 
-                # فقط مواردی که عبارت کیلویی و عدد معتبر داشتند ذخیره می‌شوند
-                if price_kg > 0:
-                    seen_links.add(href)
-                    lines = [l.strip() for l in card_text.split('\n') if l.strip()]
-                    title = lines[0] if lines else "بدون عنوان"
-                    
-                    items.append({
-                        "title": title,
-                        "price_per_kg": price_kg,
-                        "link": full_link
-                    })
-            except Exception:
+                seen_links.add(clean_href)
+                
+                items.append({
+                    "title": title,
+                    "price": main_price,
+                    "price_per_kg": price_kg if price_kg > 0 else "نامشخص",
+                    "link": full_link,
+                    "raw_text": " | ".join(lines[:4])  # خلاصه اطلاعات کارت
+                })
+            except Exception as e:
                 continue
                 
         browser.close()
@@ -116,18 +119,12 @@ def main():
     products = scrape_basalam(BASALAM_URL)
     
     if not products:
-        print("هیچ محصولی با قیمت کیلویی یافت نشد.")
+        print("هیچ محصولی پیدا نشد! لطفا بررسی کنید که لینک ورودی درست باشد.")
         return
         
-    # ۱. مرتب‌سازی بر اساس قیمت کیلویی (از ارزان‌ترین به گران‌ترین)
-    sorted_products = sorted(products, key=lambda x: x['price_per_kg'])
+    print(f"تعداد کل محصولات استخراج شده: {len(products)}")
     
-    # ۲. جدا کردن ۱۰ مورد از ارزان‌ترین‌ها
-    top_10_cheapest = sorted_products[:10]
-    
-    print(f"تعداد کل یافت شده: {len(products)} | ۱۰ مورد ارزان‌تر جدا شد.")
-    
-    # ارسال به گوگل شیت
+    # اتصال به گوگل شیت
     gc = get_gspread_client()
     try:
         sh = gc.open(SHEET_NAME)
@@ -137,13 +134,15 @@ def main():
         worksheet = sh.sheet1
 
     worksheet.clear()
-    rows = [["رتبه", "عنوان محصول", "قیمت هر کیلوگرم (تومان)", "لینک مستقیم"]]
     
-    for idx, p in enumerate(top_10_cheapest, 1):
-        rows.append([idx, p['title'], p['price_per_kg'], p['link']])
+    # ساخت ردیف‌های عنوان و دیتای کامل
+    rows = [["ردیف", "عنوان محصول", "قیمت اصلی (تومان)", "قیمت کیلویی (تومان)", "لینک مستقیم", "خلاصه کارت"]]
+    
+    for idx, p in enumerate(products, 1):
+        rows.append([idx, p['title'], p['price'], p['price_per_kg'], p['link'], p['raw_text']])
         
     worksheet.update('A1', rows)
-    print("۱۰ محصول ارزان‌تر با موفقیت در گوگل شیت درج شدند!")
+    print(f"تمام {len(products)} محصول با موفقیت در گوگل شیت ثبت شدند!")
 
 if __name__ == "__main__":
     main()

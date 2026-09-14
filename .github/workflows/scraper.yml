@@ -1,0 +1,33 @@
+name: Basalam Scraper
+
+on:
+  workflow_dispatch:
+    inputs:
+      basalam_url:
+        description: 'لینک صفحه باسلام را وارد کنید:'
+        required: true
+        default: 'https://basalam.com/s/sunflower-seeds-kernel'
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install Dependencies
+        run: |
+          pip install -r requirements.txt
+          playwright install chromium
+
+      - name: Run Scraper
+        env:
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+          BASALAM_URL: ${{ github.event.inputs.basalam_url }}
+          GOOGLE_SHEET_NAME: "محصولات باسلام"
+        run: python scraper.py
